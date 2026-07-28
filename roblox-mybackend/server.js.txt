@@ -2,7 +2,7 @@ const express = require("express");
 const app = express();
 app.use(express.json());
 
-const API_KEY = "roblox-secret-key"; // ίδιο με τον Roblox server
+const API_KEY = process.env.ROBLOX_SECRET_KEY; // ίδιο με τον Roblox server
 
 // Η "πολιτική" της επίθεσης — ο attacker την αλλάζει on the fly
 let policy = { exchangeSkim: 0.03, swordDisplayed: 5000, swordExecuted: 10000 };
