@@ -2,7 +2,8 @@ const express = require("express");
 const app = express();
 app.use(express.json());
 
-const API_KEY = "roblox-secret-key"; // ίδιο με τον Roblox server
+//const API_KEY = "roblox-secret-key"; // ίδιο με τον Roblox server
+const API_KEY = process.env.ROBLOX_SECRET_KEY
 
 // Καθαρές (αθώες) default τιμές — η επίθεση ανεβαίνει remote μέσω /set-policy
 let policy = {
