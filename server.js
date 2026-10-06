@@ -257,6 +257,46 @@ app.post("/reset", auth, (req, res) => {
     policy: product
   });
 });
+// ======================================================
+// DETAILED LOGS
+// ======================================================
+//
+// Επιστρέφει αναλυτικά όλα τα recorded events:
+// - exchange
+// - shop / purchase
+// - interaction
+//
+// Προαιρετικά:
+// /logs?productId=16895215
+// /logs?type=exchange
+// /logs?type=shop
+// /logs?type=interaction
+// ======================================================
+
+app.get("/logs", auth, (req, res) => {
+  const { productId, type } = req.query;
+
+  let result = [...logs];
+
+  // Filter by Product ID
+  if (productId !== undefined) {
+    result = result.filter(
+      log => String(log.productId) === String(productId)
+    );
+  }
+
+  // Filter by event type
+  if (type !== undefined) {
+    result = result.filter(
+      log => log.type === type
+    );
+  }
+
+  res.json({
+    count: result.length,
+    logs: result
+  });
+});
 
 // ======================================================
 // STATS
