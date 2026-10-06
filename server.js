@@ -5,31 +5,40 @@ app.use(express.json({ limit: "10kb" }));
 
 const API_KEY = process.env.ROBLOX_SECRET_KEY;
 
-// ---------------------------------------------------------
-// Experimental configuration
-// ---------------------------------------------------------
+// ======================================================
+// DEFAULT PRODUCT
+// ======================================================
 
-const DEFAULT_PRODUCT = {
-  productId: 16895215,
-  name: "Darkheart",
+const DEFAULT_PRODUCT_ID = 16895215;
+
+const DEFAULT_POLICY = {
+  productId: DEFAULT_PRODUCT_ID,
+  exchangeSkim: 0,
   gemsPerBuy: 5000,
-  displayedPrice: 5000,
-  effectivePrice: 5000,
+  swordDisplayed: 5000,
+  swordExecuted: 5000,
+
+  // Νέα στοιχεία για σύνδεση με το προϊόν
   interactionCount: 0,
-  level: 0
+  purchaseCount: 0
 };
 
+// Κάθε product έχει τη δική του policy/state
 const products = new Map();
 
-products.set(String(DEFAULT_PRODUCT.productId), {
-  ...DEFAULT_PRODUCT
+products.set(String(DEFAULT_PRODUCT_ID), {
+  ...DEFAULT_POLICY
 });
+
+// ======================================================
+// LOGS
+// ======================================================
 
 const logs = [];
 
-// ---------------------------------------------------------
-// Authentication
-// ---------------------------------------------------------
+// ======================================================
+// AUTHENTICATION
+// ======================================================
 
 function auth(req, res, next) {
   if (!API_KEY || req.get("x-api-key") !== API_KEY) {
@@ -39,138 +48,72 @@ function auth(req, res, next) {
   next();
 }
 
-// ---------------------------------------------------------
-// Experimental level
-//
-// The level is derived from aggregate product interactions,
-// not from individual players.
-// ---------------------------------------------------------
+// ======================================================
+// PRODUCT MANAGEMENT
+// ======================================================
 
-function calculateLevel(interactions) {
-  if (interactions >= 1000) return 3;
-  if (interactions >= 500) return 2;
-  if (interactions >= 100) return 1;
-  return 0;
-}
+function getProduct(productId) {
+  const id = Number(productId);
 
-// ---------------------------------------------------------
-// Experimental parameters
-//
-// These values are deliberately kept in the external service.
-// For the experiment they represent simulated conditions.
-// ---------------------------------------------------------
-
-function calculateExperimentalPolicy(level, basePrice) {
-  switch (level) {
-    case 1:
-      return {
-        displayedPrice: basePrice,
-        effectivePrice: basePrice + 250
-      };
-
-    case 2:
-      return {
-        displayedPrice: basePrice,
-        effectivePrice: basePrice + 500
-      };
-
-    case 3:
-      return {
-        displayedPrice: basePrice,
-        effectivePrice: basePrice + 1000
-      };
-
-    default:
-      return {
-        displayedPrice: basePrice,
-        effectivePrice: basePrice
-      };
+  if (!Number.isInteger(id) || id <= 0) {
+    return null;
   }
-}
 
-// ---------------------------------------------------------
-// Update product state
-// ---------------------------------------------------------
+  const key = String(id);
 
-function updateProduct(productId) {
-  const key = String(productId);
-
-  let product = products.get(key);
-
-  if (!product) {
-    product = {
-      productId: Number(productId),
-      name: `Product ${productId}`,
+  if (!products.has(key)) {
+    products.set(key, {
+      productId: id,
+      exchangeSkim: 0,
       gemsPerBuy: 5000,
-      displayedPrice: 5000,
-      effectivePrice: 5000,
+      swordDisplayed: 5000,
+      swordExecuted: 5000,
       interactionCount: 0,
-      level: 0
-    };
-
-    products.set(key, product);
-  }
-
-  product.level = calculateLevel(product.interactionCount);
-
-  const policy = calculateExperimentalPolicy(
-    product.level,
-    product.displayedPrice
-  );
-
-  product.effectivePrice = policy.effectivePrice;
-
-  return product;
-}
-
-// ---------------------------------------------------------
-// GET /config
-//
-// Roblox polls this endpoint.
-// ---------------------------------------------------------
-
-app.get("/config", auth, (req, res) => {
-  const productId = req.query.productId;
-
-  if (productId) {
-    const product = updateProduct(productId);
-
-    return res.json({
-      productId: product.productId,
-      gemsPerBuy: product.gemsPerBuy,
-      swordDisplayed: product.displayedPrice,
-      swordExecuted: product.effectivePrice,
-      interactionCount: product.interactionCount,
-      policyLevel: product.level
+      purchaseCount: 0
     });
   }
 
-  const result = {};
+  return products.get(key);
+}
 
-  for (const [id] of products) {
-    const product = updateProduct(id);
+// ======================================================
+// CONFIG
+// ======================================================
 
-    result[id] = {
-      productId: product.productId,
-      gemsPerBuy: product.gemsPerBuy,
-      swordDisplayed: product.displayedPrice,
-      swordExecuted: product.effectivePrice,
-      interactionCount: product.interactionCount,
-      policyLevel: product.level
-    };
+// Χωρίς productId:
+// επιστρέφει την policy του default product.
+//
+// Με productId:
+// επιστρέφει την policy του συγκεκριμένου προϊόντος.
+
+app.get("/config", auth, (req, res) => {
+  const productId = req.query.productId || DEFAULT_PRODUCT_ID;
+
+  const product = getProduct(productId);
+
+  if (!product) {
+    return res.status(400).json({
+      error: "invalid productId"
+    });
   }
 
-  res.json(result);
+  res.json(product);
 });
 
-// ---------------------------------------------------------
-// POST /interaction
+// ======================================================
+// INTERACTION
+// ======================================================
+
+// Καταγράφει interaction με συγκεκριμένο προϊόν.
 //
-// Increments the aggregate interaction counter for a product.
-// ---------------------------------------------------------
+// Δεν εξαρτάται από συγκεκριμένο player.
+// Το interaction συνδέεται με το Product ID.
 
 app.post("/interaction", auth, (req, res) => {
-  const { productId, interactionType = "purchase_attempt" } = req.body;
+  const {
+    productId,
+    interactionType = "purchase_attempt"
+  } = req.body;
 
   if (productId === undefined) {
     return res.status(400).json({
@@ -178,18 +121,26 @@ app.post("/interaction", auth, (req, res) => {
     });
   }
 
-  const product = updateProduct(productId);
+  const product = getProduct(productId);
+
+  if (!product) {
+    return res.status(400).json({
+      error: "invalid productId"
+    });
+  }
 
   product.interactionCount += 1;
 
-  updateProduct(productId);
+  if (interactionType === "purchase") {
+    product.purchaseCount += 1;
+  }
 
   logs.push({
     type: "interaction",
     productId: product.productId,
     interactionType,
     interactionCount: product.interactionCount,
-    policyLevel: product.level,
+    purchaseCount: product.purchaseCount,
     at: Date.now()
   });
 
@@ -197,15 +148,13 @@ app.post("/interaction", auth, (req, res) => {
     ok: true,
     productId: product.productId,
     interactionCount: product.interactionCount,
-    policyLevel: product.level
+    purchaseCount: product.purchaseCount
   });
 });
 
-// ---------------------------------------------------------
-// POST /log
-//
-// Transaction logging.
-// ---------------------------------------------------------
+// ======================================================
+// LOGGING
+// ======================================================
 
 app.post("/log", auth, (req, res) => {
   const record = {
@@ -221,117 +170,156 @@ app.post("/log", auth, (req, res) => {
   });
 });
 
-// ---------------------------------------------------------
-// POST /set-policy
+// ======================================================
+// MANUAL POLICY UPDATE
+// ======================================================
 //
-// Manual experimental control.
-// ---------------------------------------------------------
+// Κρατάμε συμβατότητα με τα ΠΑΛΙΑ curl commands.
+//
+// Αν δοθεί productId, αλλάζει η policy του συγκεκριμένου
+// προϊόντος.
+//
+// Αν ΔΕΝ δοθεί productId, αλλάζει το DEFAULT PRODUCT.
+//
+// ======================================================
 
 app.post("/set-policy", auth, (req, res) => {
   const {
     productId,
+    exchangeSkim,
     gemsPerBuy,
-    displayedPrice
+    swordDisplayed,
+    swordExecuted
   } = req.body;
 
-  if (productId === undefined) {
+  const targetProductId =
+    productId !== undefined
+      ? productId
+      : DEFAULT_PRODUCT_ID;
+
+  const product = getProduct(targetProductId);
+
+  if (!product) {
     return res.status(400).json({
-      error: "productId is required"
+      error: "invalid productId"
     });
   }
 
-  const product = updateProduct(productId);
+  if (exchangeSkim !== undefined) {
+    product.exchangeSkim = Number(exchangeSkim);
+  }
 
   if (gemsPerBuy !== undefined) {
     product.gemsPerBuy = Number(gemsPerBuy);
   }
 
-  if (displayedPrice !== undefined) {
-    product.displayedPrice = Number(displayedPrice);
+  if (swordDisplayed !== undefined) {
+    product.swordDisplayed = Number(swordDisplayed);
   }
 
-  updateProduct(productId);
+  if (swordExecuted !== undefined) {
+    product.swordExecuted = Number(swordExecuted);
+  }
 
   res.json({
     ok: true,
-    product
+    policy: product
   });
 });
 
-// ---------------------------------------------------------
-// GET /stats
-// ---------------------------------------------------------
+// ======================================================
+// RESET PRODUCT
+// ======================================================
+
+app.post("/reset", auth, (req, res) => {
+  const productId =
+    req.body.productId !== undefined
+      ? req.body.productId
+      : DEFAULT_PRODUCT_ID;
+
+  const product = getProduct(productId);
+
+  if (!product) {
+    return res.status(400).json({
+      error: "invalid productId"
+    });
+  }
+
+  product.exchangeSkim = 0;
+  product.gemsPerBuy = 5000;
+  product.swordDisplayed = 5000;
+  product.swordExecuted = 5000;
+  product.interactionCount = 0;
+  product.purchaseCount = 0;
+
+  res.json({
+    ok: true,
+    policy: product
+  });
+});
+
+// ======================================================
+// STATS
+// ======================================================
 
 app.get("/stats", auth, (req, res) => {
   const exchanges = logs.filter(
-    x => x.type === "exchange"
+    l => l.type === "exchange"
   );
 
   const shops = logs.filter(
-    x => x.type === "shop"
+    l => l.type === "shop"
   );
 
   const interactions = logs.filter(
-    x => x.type === "interaction"
+    l => l.type === "interaction"
   );
 
-  const totalDisplayed = exchanges.reduce(
-    (sum, x) => sum + Number(x.displayed || 0),
+  // Συνολικό skim
+  const totalSkim = exchanges.reduce(
+    (sum, l) => sum + Number(l.skimmed || 0),
     0
   );
 
-  const totalCredited = exchanges.reduce(
-    (sum, x) => sum + Number(x.credited || 0),
-    0
+  // Overcharges
+  const overcharges = shops.filter(
+    l =>
+      Number(l.charged || 0) >
+      Number(l.displayed || 0)
   );
 
-  const totalDisplayedShopValue = shops.reduce(
-    (sum, x) => sum + Number(x.displayed || 0),
-    0
-  );
+  // Product statistics
+  const productStats = Array.from(products.values()).map(
+    product => ({
+      productId: product.productId,
+      interactionCount: product.interactionCount,
+      purchaseCount: product.purchaseCount,
 
-  const totalEffectiveShopValue = shops.reduce(
-    (sum, x) => sum + Number(x.charged || 0),
-    0
-  );
+      exchangeSkim: product.exchangeSkim,
+      gemsPerBuy: product.gemsPerBuy,
 
-  const discrepancies = shops.filter(
-    x => Number(x.charged || 0) !== Number(x.displayed || 0)
+      swordDisplayed: product.swordDisplayed,
+      swordExecuted: product.swordExecuted
+    })
   );
 
   res.json({
     transactions: logs.length,
 
     exchanges: exchanges.length,
-
     shopTransactions: shops.length,
-
     interactions: interactions.length,
 
-    totalDisplayedExchangeValue: totalDisplayed,
+    totalSkim,
+    overcharges: overcharges.length,
 
-    totalCreditedExchangeValue: totalCredited,
-
-    totalDisplayedShopValue,
-
-    totalEffectiveShopValue,
-
-    discrepancyTransactions: discrepancies.length,
-
-    products: Array.from(products.values()).map(product => ({
-      productId: product.productId,
-      name: product.name,
-      interactionCount: product.interactionCount,
-      policyLevel: product.level,
-      displayedPrice: product.displayedPrice,
-      effectivePrice: product.effectivePrice
-    }))
+    products: productStats
   });
 });
 
-// ---------------------------------------------------------
-// GET /health
-// ---------------------------------------------------------
+// ======================================================
+// HEALTH
+// ======================================================
 
 app.get("/health", (req, res) => {
   res.json({
@@ -340,12 +328,14 @@ app.get("/health", (req, res) => {
   });
 });
 
-// ---------------------------------------------------------
-// Start
-// ---------------------------------------------------------
+// ======================================================
+// START
+// ======================================================
 
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
-  console.log(`Experimental policy service running on port ${PORT}`);
+  console.log(
+    `Experimental policy service running on port ${PORT}`
+  );
 });
