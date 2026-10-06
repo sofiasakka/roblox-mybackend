@@ -1,56 +1,54 @@
 const express = require("express");
 
 const app = express();
+
 app.use(express.json({ limit: "10kb" }));
 
 const API_KEY = process.env.ROBLOX_SECRET_KEY;
-
-// ======================================================
-// DEFAULT PRODUCT
-// ======================================================
 
 const DEFAULT_PRODUCT_ID = 16895215;
 
 const DEFAULT_POLICY = {
   productId: DEFAULT_PRODUCT_ID,
+
+  // Existing policy parameters
   exchangeSkim: 0,
   gemsPerBuy: 5000,
   swordDisplayed: 5000,
   swordExecuted: 5000,
 
-  // Νέα στοιχεία για σύνδεση με το προϊόν
+  // Aggregate measurements
   interactionCount: 0,
   purchaseCount: 0
 };
 
-// Κάθε product έχει τη δική του policy/state
+// Product-specific policies and counters
 const products = new Map();
 
 products.set(String(DEFAULT_PRODUCT_ID), {
   ...DEFAULT_POLICY
 });
 
-// ======================================================
-// LOGS
-// ======================================================
-
+// Experimental event log
 const logs = [];
 
-// ======================================================
-// AUTHENTICATION
-// ======================================================
+/* =========================================================
+   AUTHENTICATION
+   ========================================================= */
 
 function auth(req, res, next) {
   if (!API_KEY || req.get("x-api-key") !== API_KEY) {
-    return res.status(403).json({ error: "forbidden" });
+    return res.status(403).json({
+      error: "forbidden"
+    });
   }
 
   next();
 }
 
-// ======================================================
-// PRODUCT MANAGEMENT
-// ======================================================
+/* =========================================================
+   PRODUCT MANAGEMENT
+   ========================================================= */
 
 function getProduct(productId) {
   const id = Number(productId);
@@ -76,18 +74,15 @@ function getProduct(productId) {
   return products.get(key);
 }
 
-// ======================================================
-// CONFIG
-// ======================================================
-
-// Χωρίς productId:
-// επιστρέφει την policy του default product.
-//
-// Με productId:
-// επιστρέφει την policy του συγκεκριμένου προϊόντος.
+/* =========================================================
+   CONFIG
+   ========================================================= */
 
 app.get("/config", auth, (req, res) => {
-  const productId = req.query.productId || DEFAULT_PRODUCT_ID;
+  const productId =
+    req.query.productId !== undefined
+      ? req.query.productId
+      : DEFAULT_PRODUCT_ID;
 
   const product = getProduct(productId);
 
@@ -100,19 +95,16 @@ app.get("/config", auth, (req, res) => {
   res.json(product);
 });
 
-// ======================================================
-// INTERACTION
-// ======================================================
-
-// Καταγράφει interaction με συγκεκριμένο προϊόν.
-//
-// Δεν εξαρτάται από συγκεκριμένο player.
-// Το interaction συνδέεται με το Product ID.
+/* =========================================================
+   INTERACTION TRACKING
+   ========================================================= */
 
 app.post("/interaction", auth, (req, res) => {
   const {
     productId,
-    interactionType = "purchase_attempt"
+    interactionType = "purchase_attempt",
+    experimentId = "unknown",
+    userId = null
   } = req.body;
 
   if (productId === undefined) {
@@ -129,36 +121,50 @@ app.post("/interaction", auth, (req, res) => {
     });
   }
 
+  // Every interaction increments interactionCount.
   product.interactionCount += 1;
 
+  // Only a confirmed successful purchase increments purchaseCount.
   if (interactionType === "purchase") {
     product.purchaseCount += 1;
   }
 
-  logs.push({
+  const record = {
     type: "interaction",
+
     productId: product.productId,
     interactionType,
+
+    experimentId,
+    userId,
+
     interactionCount: product.interactionCount,
     purchaseCount: product.purchaseCount,
+
+    timestamp: new Date().toISOString(),
     at: Date.now()
-  });
+  };
+
+  logs.push(record);
 
   res.json({
     ok: true,
     productId: product.productId,
+
     interactionCount: product.interactionCount,
     purchaseCount: product.purchaseCount
   });
 });
 
-// ======================================================
-// LOGGING
-// ======================================================
+/* =========================================================
+   GENERAL EVENT LOGGING
+   ========================================================= */
 
 app.post("/log", auth, (req, res) => {
   const record = {
     ...req.body,
+
+    timestamp: new Date().toISOString(),
     at: Date.now()
   };
 
@@ -170,18 +176,9 @@ app.post("/log", auth, (req, res) => {
   });
 });
 
-// ======================================================
-// MANUAL POLICY UPDATE
-// ======================================================
-//
-// Κρατάμε συμβατότητα με τα ΠΑΛΙΑ curl commands.
-//
-// Αν δοθεί productId, αλλάζει η policy του συγκεκριμένου
-// προϊόντος.
-//
-// Αν ΔΕΝ δοθεί productId, αλλάζει το DEFAULT PRODUCT.
-//
-// ======================================================
+/* =========================================================
+   CHANGE POLICY
+   ========================================================= */
 
 app.post("/set-policy", auth, (req, res) => {
   const {
@@ -227,9 +224,9 @@ app.post("/set-policy", auth, (req, res) => {
   });
 });
 
-// ======================================================
-// RESET PRODUCT
-// ======================================================
+/* =========================================================
+   RESET PRODUCT
+   ========================================================= */
 
 app.post("/reset", auth, (req, res) => {
   const productId =
@@ -249,6 +246,7 @@ app.post("/reset", auth, (req, res) => {
   product.gemsPerBuy = 5000;
   product.swordDisplayed = 5000;
   product.swordExecuted = 5000;
+
   product.interactionCount = 0;
   product.purchaseCount = 0;
 
@@ -257,38 +255,38 @@ app.post("/reset", auth, (req, res) => {
     policy: product
   });
 });
-// ======================================================
-// DETAILED LOGS
-// ======================================================
-//
-// Επιστρέφει αναλυτικά όλα τα recorded events:
-// - exchange
-// - shop / purchase
-// - interaction
-//
-// Προαιρετικά:
-// /logs?productId=16895215
-// /logs?type=exchange
-// /logs?type=shop
-// /logs?type=interaction
-// ======================================================
+
+/* =========================================================
+   LOGS
+   ========================================================= */
 
 app.get("/logs", auth, (req, res) => {
-  const { productId, type } = req.query;
+  const {
+    productId,
+    type,
+    experimentId
+  } = req.query;
 
   let result = [...logs];
 
-  // Filter by Product ID
   if (productId !== undefined) {
     result = result.filter(
-      log => String(log.productId) === String(productId)
+      log =>
+        String(log.productId) === String(productId)
     );
   }
 
-  // Filter by event type
   if (type !== undefined) {
     result = result.filter(
-      log => log.type === type
+      log =>
+        log.type === type
+    );
+  }
+
+  if (experimentId !== undefined) {
+    result = result.filter(
+      log =>
+        log.experimentId === experimentId
     );
   }
 
@@ -298,68 +296,115 @@ app.get("/logs", auth, (req, res) => {
   });
 });
 
-// ======================================================
-// STATS
-// ======================================================
+/* =========================================================
+   STATISTICS
+   ========================================================= */
 
 app.get("/stats", auth, (req, res) => {
-  const exchanges = logs.filter(
-    l => l.type === "exchange"
+  const {
+    productId,
+    experimentId
+  } = req.query;
+
+  let filteredLogs = [...logs];
+
+  if (productId !== undefined) {
+    filteredLogs = filteredLogs.filter(
+      log =>
+        String(log.productId) === String(productId)
+    );
+  }
+
+  if (experimentId !== undefined) {
+    filteredLogs = filteredLogs.filter(
+      log =>
+        log.experimentId === experimentId
+    );
+  }
+
+  const exchanges = filteredLogs.filter(
+    log => log.type === "exchange"
   );
 
-  const shops = logs.filter(
-    l => l.type === "shop"
+  const shops = filteredLogs.filter(
+    log => log.type === "shop"
   );
 
-  const interactions = logs.filter(
-    l => l.type === "interaction"
+  const interactions = filteredLogs.filter(
+    log => log.type === "interaction"
   );
 
-  // Συνολικό skim
   const totalSkim = exchanges.reduce(
-    (sum, l) => sum + Number(l.skimmed || 0),
+    (sum, log) =>
+      sum + Number(log.skimmed || 0),
     0
   );
 
-  // Overcharges
   const overcharges = shops.filter(
-    l =>
-      Number(l.charged || 0) >
-      Number(l.displayed || 0)
+    log =>
+      Number(log.charged || 0) >
+      Number(log.displayed || 0)
   );
 
-  // Product statistics
-  const productStats = Array.from(products.values()).map(
-    product => ({
-      productId: product.productId,
-      interactionCount: product.interactionCount,
-      purchaseCount: product.purchaseCount,
+  const productStats = Array.from(
+    products.values()
+  )
+    .filter(product => {
+      if (productId === undefined) {
+        return true;
+      }
 
-      exchangeSkim: product.exchangeSkim,
-      gemsPerBuy: product.gemsPerBuy,
-
-      swordDisplayed: product.swordDisplayed,
-      swordExecuted: product.swordExecuted
+      return (
+        String(product.productId) ===
+        String(productId)
+      );
     })
-  );
+    .map(product => ({
+      productId: product.productId,
+
+      interactionCount:
+        product.interactionCount,
+
+      purchaseCount:
+        product.purchaseCount,
+
+      exchangeSkim:
+        product.exchangeSkim,
+
+      gemsPerBuy:
+        product.gemsPerBuy,
+
+      swordDisplayed:
+        product.swordDisplayed,
+
+      swordExecuted:
+        product.swordExecuted
+    }));
 
   res.json({
-    transactions: logs.length,
+    transactions: filteredLogs.length,
 
     exchanges: exchanges.length,
-    shopTransactions: shops.length,
-    interactions: interactions.length,
+
+    shopTransactions:
+      shops.length,
+
+    interactions:
+      interactions.length,
 
     totalSkim,
-    overcharges: overcharges.length,
 
-    products: productStats
+    overcharges:
+      overcharges.length,
+
+    products:
+      productStats
   });
 });
 
-// ======================================================
-// HEALTH
-// ======================================================
+/* =========================================================
+   HEALTH CHECK
+   ========================================================= */
 
 app.get("/health", (req, res) => {
   res.json({
@@ -368,11 +413,12 @@ app.get("/health", (req, res) => {
   });
 });
 
-// ======================================================
-// START
-// ======================================================
+/* =========================================================
+   SERVER
+   ========================================================= */
 
-const PORT = process.env.PORT || 3000;
+const PORT =
+  process.env.PORT || 3000;
 
 app.listen(PORT, () => {
   console.log(
